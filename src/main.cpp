@@ -442,8 +442,6 @@ void LcdFacade::initialize_lcd()
   send_command(0x80);
 }
 
-//--------------------------------------------------------
-// codigo da pratica anterior a partir daqui
 void SSDisplayFacade::print_err_msg(uint8_t active_digit)
 {
   const uint8_t err_msg[3] = {
