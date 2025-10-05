@@ -61,14 +61,6 @@
   DADOS_LCD = (DADOS_LCD & 0xF0) | (0x0F & data);
 #endif
 
-// Liga o sinal que habilita para o LCD.
-#define enable_pulse()                                                         \
-  _delay_us(1);                                                                \
-  set_bit(CONTR_LCD, LCD_ENABLE);                                              \
-  _delay_us(1);                                                                \
-  clr_bit(CONTR_LCD, LCD_ENABLE);                                              \
-  _delay_us(45)
-
 ////////////////////////////////////////////////////////////////////////////////////
 // ENUMS
 ////////////////////////////////////////////////////////////////////////////////////
@@ -91,6 +83,12 @@ public:
   static void send_message(uint8_t data, MessageType msg_type);
 
   /**
+   * Envia um comando para o LCD. É o mesmo que
+   * `LcdFacade::send_message(command_byte, MessageType::Instruction)`.
+   */
+  static void send_command(uint8_t command_byte);
+
+  /**
    * Inicializa o LCD configurado para usar uma via de dados de 4 bits.
    */
   static void initialize_lcd();
@@ -106,11 +104,26 @@ private:
    * Coloca os dados (`data`) no LCD nibble-a-nibble.
    */
   static void set_data_to_lcd(uint8_t data);
+
+  /**
+   * Manda um sinal de habilitação (pulso) para o LCD.
+   */
+  static void enable_pulse();
 };
 
 ////////////////////////////////////////////////////////////////////////////////////
 // FUNCTIONS DECLARATIONS
 ////////////////////////////////////////////////////////////////////////////////////
+
+void LcdFacade::enable_pulse()
+{
+  _delay_us(1);
+  set_bit(CONTR_LCD, LCD_ENABLE);
+  _delay_us(1);
+  clr_bit(CONTR_LCD, LCD_ENABLE);
+  _delay_us(45);
+}
+
 void LcdFacade::set_data_to_lcd(uint8_t data)
 {
   set_most_significant_nibble(data);
@@ -132,8 +145,8 @@ void LcdFacade::set_message_data_type_to_pin(MessageType msg_type)
 
 void LcdFacade::send_message(uint8_t data, MessageType msg_type)
 {
-  LcdFacade::set_message_data_type_to_pin(msg_type);
-  LcdFacade::set_data_to_lcd(data);
+  set_message_data_type_to_pin(msg_type);
+  set_data_to_lcd(data);
 
   enable_pulse();
 
@@ -141,6 +154,11 @@ void LcdFacade::send_message(uint8_t data, MessageType msg_type)
       msg_type == MessageType::Instruction && data < 4;
 
   if (is_return_or_clean_instruction) _delay_ms(2);
+}
+
+void LcdFacade::send_command(uint8_t command_byte)
+{
+  send_message(command_byte, MessageType::Instruction);
 }
 
 void LcdFacade::initialize_lcd()
@@ -157,7 +175,7 @@ void LcdFacade::initialize_lcd()
   // ultrapassar 4.5V — que pode ser maior na prática).
   _delay_ms(20);
 
-  LcdFacade::send_message(0x30, MessageType::Instruction);
+  send_message(0x30, MessageType::Instruction);
 
   // Liga o LCD respeitando o tempo de resposta do próprio LCD.
   enable_pulse();
@@ -173,23 +191,23 @@ void LcdFacade::initialize_lcd()
 
   // Necessário para forçar a interface de 4 bits, deve ser enviado duas vezes
   // (a outra está abaixo).
-  LcdFacade::send_message(0x20, MessageType::Instruction);
+  send_command(0x20);
 
   // Essa instrução vai:
   // * Finaliza a configuração para usar interface de 4 bits;
   // * Configurar para usar 2 linhas da memória RAM;
   // * Configurar a fonte de caracteres para uma proporção 5 ⨉ 8.
   enable_pulse();
-  LcdFacade::send_message(0x28, MessageType::Instruction);
+  send_command(0x28);
 
   // Desliga o display
-  LcdFacade::send_message(0x08, MessageType::Instruction);
+  send_command(0x08);
   // Limpa todo o display
-  LcdFacade::send_message(0x01, MessageType::Instruction);
+  send_command(0x01);
   // Mostra a mensagem no display, mas desativa o cursor
-  LcdFacade::send_message(0x0F, MessageType::Instruction);
+  send_command(0x0F);
   // Inicializa o cursor na primeira posição à esquerda (1ᵃ linha).
-  LcdFacade::send_message(0x80, MessageType::Instruction);
+  send_command(0x80);
 }
 
 //--------------------------------------------------------
