@@ -1,107 +1,195 @@
 #include "Arduino.h"
+#include <stdint.h>
 
-#define set_bit(y, bit) (y |= (1 << bit))  // coloca em 1 o bit x da variável Y
-#define clr_bit(y, bit) (y &= ~(1 << bit)) // coloca em 0 o bit x da variável Y
-#define cpl_bit(y, bit)                                                        \
-  (y ^= (1 << bit)) // troca o estado lógico do bit x da variável Y
-#define tst_bit(y, bit)                                                        \
-  (y & (1 << bit)) // retorna 0 ou 1 conforme leitura do bit
+////////////////////////////////////////////////////////////////////////////////////
+// PINS ALIASES
+////////////////////////////////////////////////////////////////////////////////////
+/// 4 bits de dados do LCD no PORTD
+#define DADOS_LCD PORTD
 
-#define DADOS_LCD PORTD // 4 bits de dados do LCD no PORTD
-#define nibble_dados                                                           \
-  1 // 0 para via de dados do LCD nos 4 LSBs do PORT empregado (Px0-D4, Px1-D5,
-    // Px2-D6, Px3-D7)
-// 1 para via de dados do LCD nos 4 MSBs do PORT empregado (Px4-D4, Px5-D5,
-// Px6-D6, Px7-D7)
-#define CONTR_LCD PORTB // PORT com os pinos de controle do LCD (pino R/W em 0).
-#define E PB4           // pino de habilitação do LCD (enable)
-#define RS PB3 // pino para informar se o dado é uma instrução ou caractere
+/**
+ * Essa flag indica se os pinos que recebem dados no LCD são os 4 LSB⁽¹⁾ (Px0-D4
+ * a Px3-D7) ou os 4 MSB⁽²⁾ (Px4-D4 a Px7-D7).
+ *
+ * ---
+ *
+ * 1: Less Significant Bits (bits menos significativos, isso é, os mais à
+ * direita).
+ * 2: Most Significant Bits (bits mais significativos, isso é, os mais
+ * à esquerda).
+ * Obs.: 1 nibble é meio byte (ou 4 bits).
+ */
+#define LCD_DATA_NIBBLE 1
 
-// sinal de habilitação para o LCD
-#define pulso_enable()                                                         \
+/// PORT com os pinos de controle do LCD (pino R/W e Enable).
+#define CONTR_LCD PORTB
+
+/// Pino de habilitação do LCD (enable)
+#define LCD_ENABLE PB4
+
+/// Pino que informar se o dado é uma instrução ou caractere
+/// - 0: indica que é uma instrução;
+/// - 1: indica que é um caractere.
+#define DATA_TYPE_PIN PB3
+
+////////////////////////////////////////////////////////////////////////////////////
+// MACROS
+////////////////////////////////////////////////////////////////////////////////////
+/// Coloca em 1 o `i`-nésimo bit da variável `y`.
+#define set_bit(y, i) (y |= (1 << i))
+
+/// Coloca em 0 o bit `i`-nésimo bit da variável `y`.
+#define clr_bit(y, i) (y &= ~(1 << i))
+
+/// Inverte o estado lógico do `i`-nésimo bit da variável `y`.
+#define cpl_bit(y, i) (y ^= (1 << i))
+
+/// Retorna 0 ou 1 conforme leitura do `i`-ésimo da variável `y`.
+#define tst_bit(y, i) (y & (1 << i))
+
+#if (LCD_DATA_NIBBLE == 1)
+#define set_most_significant_nibble(data)                                      \
+  DADOS_LCD = (DADOS_LCD & 0x0F) | (0xF0 & data);
+
+#define set_less_significant_nibble(data)                                      \
+  DADOS_LCD = (DADOS_LCD & 0x0F) | (0xF0 & (data << 4));
+#else
+#define set_most_significant_nibble(trimmed_data_nibble)                       \
+  DADOS_LCD = (DADOS_LCD & 0xF0) | (data >> 4);
+
+#define set_less_significant_nibble(data)                                      \
+  DADOS_LCD = (DADOS_LCD & 0xF0) | (0x0F & data);
+#endif
+
+// Liga o sinal que habilita para o LCD.
+#define enable_pulse()                                                         \
   _delay_us(1);                                                                \
-  set_bit(CONTR_LCD, E);                                                       \
+  set_bit(CONTR_LCD, LCD_ENABLE);                                              \
   _delay_us(1);                                                                \
-  clr_bit(CONTR_LCD, E);                                                       \
+  clr_bit(CONTR_LCD, LCD_ENABLE);                                              \
   _delay_us(45)
 
-// protótipo das funções
-void cmd_LCD(unsigned char c, char cd);
-void inic_LCD_4bits();
-
-//---------------------------------------------------------------------------------------------
-// Sub-rotina para enviar caracteres e comandos ao LCD com via de dados de 4
-// bits
-//---------------------------------------------------------------------------------------------
-void cmd_LCD(unsigned char c,
-             char cd) // c é o dado  e cd indica se é instrução ou caractere
+////////////////////////////////////////////////////////////////////////////////////
+// ENUMS
+////////////////////////////////////////////////////////////////////////////////////
+enum class MessageType
 {
-  if (cd == 0)
-    clr_bit(CONTR_LCD, RS);
-  else
-    set_bit(CONTR_LCD, RS);
+  Instruction,
+  Character
+};
 
-// primeiro nibble de dados - 4 MSB
-#if (nibble_dados) // compila código para os pinos de dados do LCD nos 4 MSB do
-                   // PORT
-  DADOS_LCD = (DADOS_LCD & 0b00001111) | (0b11110000 & c);
-#else // compila código para os pinos de dados do LCD nos 4 LSB do PORT
-  DADOS_LCD = (DADOS_LCD & 0xF0) | (c >> 4);
-#endif
+////////////////////////////////////////////////////////////////////////////////////
+// Classes Declarations
+////////////////////////////////////////////////////////////////////////////////////
+class LcdFacade
+{
+public:
+  /**
+   * Envia caracteres ou comandos para o LCD utilizando a via de 4 bits (1
+   * nibble).
+   */
+  static void send_message(uint8_t data, MessageType msg_type);
 
-  pulso_enable();
+  /**
+   * Inicializa o LCD configurado para usar uma via de dados de 4 bits.
+   */
+  static void initialize_lcd();
 
-// segundo nibble de dados - 4 LSB
-#if (nibble_dados) // compila código para os pinos de dados do LCD nos 4 MSB do
-                   // PORT
-  DADOS_LCD = (DADOS_LCD & 0b00001111) | (0b11110000 & (c << 4));
-#else // compila código para os pinos de dados do LCD nos 4 LSB do PORT
-  DADOS_LCD = (DADOS_LCD & 0xF0) | (0x0F & c);
-#endif
+private:
+  /**
+   * Coloca o pino `DATA_TYPE_PIN` no respectivo estado de acordo com o tipo de
+   * dado da mensagem.
+   */
+  static void set_message_data_type_to_pin(MessageType msg_type);
 
-  pulso_enable();
+  /**
+   * Coloca os dados (`data`) no LCD nibble-a-nibble.
+   */
+  static void set_data_to_lcd(uint8_t data);
+};
 
-  if ((cd == 0) &&
-      (c < 4)) // se for instrução de retorno ou limpeza espera LCD estar pronto
-    _delay_ms(2);
+////////////////////////////////////////////////////////////////////////////////////
+// FUNCTIONS DECLARATIONS
+////////////////////////////////////////////////////////////////////////////////////
+void LcdFacade::set_data_to_lcd(uint8_t data)
+{
+  set_most_significant_nibble(data);
+  set_less_significant_nibble(data);
 }
-//---------------------------------------------------------------------------------------------
-// Sub-rotina para inicialização do LCD com via de dados de 4 bits
-//---------------------------------------------------------------------------------------------
-void inic_LCD_4bits() // sequência ditada pelo fabricando do circuito integrado
-                      // HD44780
-{                     // o LCD será só escrito. Então, R/W é sempre zero.
 
-  clr_bit(CONTR_LCD,
-          RS); // RS em zero indicando que o dado para o LCD será uma instrução
-  clr_bit(CONTR_LCD, E); // pino de habilitação em zero
+void LcdFacade::set_message_data_type_to_pin(MessageType msg_type)
+{
+  switch (msg_type)
+  {
+  case MessageType::Instruction:
+    clr_bit(CONTR_LCD, DATA_TYPE_PIN);
+    break;
+  case MessageType::Character:
+    set_bit(CONTR_LCD, DATA_TYPE_PIN);
+    break;
+  }
+}
 
-  _delay_ms(20); // tempo para estabilizar a tensão do LCD, após VCC
-                 // ultrapassar 4.5 V (na prática pode ser maior).
+void LcdFacade::send_message(uint8_t data, MessageType msg_type)
+{
+  LcdFacade::set_message_data_type_to_pin(msg_type);
+  LcdFacade::set_data_to_lcd(data);
 
-  cmd_LCD(0x30, 0);
+  enable_pulse();
 
-  pulso_enable(); // habilitação respeitando os tempos de resposta do LCD
+  const auto is_return_or_clean_instruction =
+      msg_type == MessageType::Instruction && data < 4;
+
+  if (is_return_or_clean_instruction) _delay_ms(2);
+}
+
+void LcdFacade::initialize_lcd()
+{
+  // Essa sequência é ditada pelo fabricante do circuito integrado HD44780.
+  // O LCD será só escrito, então, R/W deve ser sempre zero.
+
+  // Indica que é uma instrução
+  clr_bit(CONTR_LCD, DATA_TYPE_PIN);
+  // Manualmente desabilita o LCD
+  clr_bit(CONTR_LCD, LCD_ENABLE);
+
+  // Tempo necessário para estabilizar a tensão do LCD (após o VCC
+  // ultrapassar 4.5V — que pode ser maior na prática).
+  _delay_ms(20);
+
+  LcdFacade::send_message(0x30, MessageType::Instruction);
+
+  // Liga o LCD respeitando o tempo de resposta do próprio LCD.
+  enable_pulse();
   _delay_ms(5);
-  pulso_enable();
-  _delay_us(200);
-  pulso_enable(); /*até aqui ainda é uma interface de 8 bits.
-          Muitos programadores desprezam os comandos acima, respeitando apenas o
-          tempo de estabilização da tensão (geralmente funciona). Se o LCD não
-          for inicializado primeiro no modo de 8 bits, haverá problemas se o
-          microcontrolador for inicializado e o display já o tiver sido.*/
+  enable_pulse();
+  _delay_ms(200);
+  enable_pulse();
+  // Até aqui ainda é uma interface de 8 bits.
+  // Muitos programadores desprezam os comandos acima, respeitando apenas
+  // o tempo de estabilização da tensão (geralmente funciona). Se o LCD
+  // não for inicializado primeiro no modo de 8 bits, haverá problemas se
+  // o microcontrolador for inicializado e o display já o tiver sido.
 
-  // interface de 4 bits, deve ser enviado duas vezes (a outra está abaixo)
-  cmd_LCD(0x20, 0);
+  // Necessário para forçar a interface de 4 bits, deve ser enviado duas vezes
+  // (a outra está abaixo).
+  LcdFacade::send_message(0x20, MessageType::Instruction);
 
-  pulso_enable();
-  cmd_LCD(0x28, 0); // interface de 4 bits 2 linhas (aqui se habilita as 2
-                    // linhas) são enviados os 2 nibbles (0x2 e 0x8)
-  cmd_LCD(0x08, 0); // desliga o display
-  cmd_LCD(0x01, 0); // limpa todo o display
-  cmd_LCD(0x0F, 0); // mensagem aparente cursor inativo não piscando
-  cmd_LCD(0x80,
-          0); // inicializa cursor na primeira posição a esquerda - 1a linha
+  // Essa instrução vai:
+  // * Finaliza a configuração para usar interface de 4 bits;
+  // * Configurar para usar 2 linhas da memória RAM;
+  // * Configurar a fonte de caracteres para uma proporção 5 ⨉ 8.
+  enable_pulse();
+  LcdFacade::send_message(0x28, MessageType::Instruction);
+
+  // Desliga o display
+  LcdFacade::send_message(0x08, MessageType::Instruction);
+  // Limpa todo o display
+  LcdFacade::send_message(0x01, MessageType::Instruction);
+  // Mostra a mensagem no display, mas desativa o cursor
+  LcdFacade::send_message(0x0F, MessageType::Instruction);
+  // Inicializa o cursor na primeira posição à esquerda (1ᵃ linha).
+  LcdFacade::send_message(0x80, MessageType::Instruction);
 }
 
 //--------------------------------------------------------
